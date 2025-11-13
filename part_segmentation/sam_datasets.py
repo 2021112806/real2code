@@ -145,7 +145,8 @@ class SamH5Dataset(Dataset):
         for obj_type in natsorted(os.listdir(root_dir)):
             if lookup_obj_type != "*" and obj_type != lookup_obj_type:
                 continue 
-            if rebuttal_objects_only and obj_type not in ['Scissors', 'Eyeglasses']:
+            # if rebuttal_objects_only and obj_type not in ['Scissors', 'Eyeglasses']:
+            if rebuttal_objects_only and obj_type not in ['StorageFurniture']:
                 continue
             obj_filenames = defaultdict(list)
             for obj_folder in natsorted(os.listdir(join(root_dir, obj_type))):

@@ -26,10 +26,10 @@ import pickle
 import seaborn as sns
 import open3d as o3d 
 
-from part_segmentation.test_sam_utils import load_sam_model, get_one_tsdf, project_3D_to_2D, eval_model_on_points, multimask_nms_filter
-from part_segmentation.finetune_sam import get_image_transform
-from part_segmentation.sam_datasets import SamH5Dataset
-from part_segmentation.sam_to_pcd import load_blender_data
+from test_sam_utils import load_sam_model, get_one_tsdf, project_3D_to_2D, eval_model_on_points, multimask_nms_filter
+from finetune_sam import get_image_transform
+from sam_datasets import SamH5Dataset
+from sam_to_pcd import load_blender_data
 
 ORIGINAL_IMG_SIZE=(512, 512)
 SAM_MASK_SIZE=(1920, 1920)
@@ -97,11 +97,22 @@ def prepare_img_camera_data(batch, model, device):
         all_data.append(data)
     return all_data
 
-def get_prompt_points(mesh, all_cam_data, num_sample_points):
-    # First sample 3D _candidate_ points from the volume  
-    # first sample more points and take only these that have a large number of valid corresponding 2D points on the multi-view RGB images
-    candidates = mesh.sample_points_uniformly(number_of_points=num_sample_points * 2) 
-    candidate_points = np.array(candidates.points)
+def get_prompt_points(mesh_or_points, all_cam_data, num_sample_points):
+    # First sample 3D candidate points from the volume.
+    # If an Open3D mesh is provided with triangles, sample uniformly on its surface;
+    # otherwise, treat input as numpy points array and use it directly.
+    if hasattr(mesh_or_points, "triangles") and len(np.asarray(mesh_or_points.triangles)) > 0:
+        candidates = mesh_or_points.sample_points_uniformly(number_of_points=num_sample_points * 2)
+        candidate_points = np.array(candidates.points)
+    else:
+        candidate_points = np.asarray(mesh_or_points)
+        if candidate_points.ndim != 2 or candidate_points.shape[1] != 3:
+            raise ValueError("Expected candidate points of shape (N, 3)")
+        # ensure we have enough candidates
+        if candidate_points.shape[0] < num_sample_points:
+            # simple replication to reach required count
+            repeat = int(np.ceil((num_sample_points * 2) / max(1, candidate_points.shape[0])))
+            candidate_points = np.repeat(candidate_points, repeat, axis=0)
     num_views_valid = np.zeros(len(candidate_points)) # for each point, count how many views have a valid 2D projection
     all_2d_points = []
     for cam_data in all_cam_data:
@@ -185,6 +196,9 @@ def aggregate_mask_to_pcd(nms_filtered, all_cam_data, max_pcd_size):
                 new_mask = new_masks[i] * (old_mask == 0)
                 new_masks[i] = new_mask
         # mask out the current mask 
+        # Convert depths to float32 to allow -1 values (invalid depth markers)
+        for i in range(len(depths)):
+            depths[i] = depths[i].astype(np.float32)
         for i, mask in enumerate(new_masks):
             rgbs[i][mask < 1] = 0
             depths[i][mask < 1] = -1
@@ -261,8 +275,19 @@ def evaluate_one_object(batch, model, device, save_dir, num_sample_3d_points=10,
 
     max_pcd_size = len(np.array(pcd.points))
     mesh = tsdf.extract_triangle_mesh()
-    sample_3d_points, sample_2d_points = get_prompt_points(
-        mesh, all_data, num_sample_3d_points)
+    # Fallback: if mesh has no triangles, use point cloud samples as candidates
+    if len(np.asarray(mesh.triangles)) == 0:
+        print("WARNING: TSDF mesh has no triangles; falling back to point cloud candidates for prompting.")
+        # downsample to a manageable set but ensure enough candidates
+        pcd_for_sample = pcd.voxel_down_sample(voxel_size=0.01)
+        points_np = np.asarray(pcd_for_sample.points)
+        if points_np.shape[0] == 0:
+            raise RuntimeError("Point cloud is empty; cannot sample prompt points.")
+        sample_3d_points, sample_2d_points = get_prompt_points(
+            points_np, all_data, num_sample_3d_points)
+    else:
+        sample_3d_points, sample_2d_points = get_prompt_points(
+            mesh, all_data, num_sample_3d_points)
     num_cameras = len(all_data)
     num_points = len(sample_3d_points)
     sam_mask_size = ORIGINAL_IMG_SIZE #SAM_MASK_SIZE
@@ -495,17 +520,17 @@ def main():
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--data_dir", type=str, default="/store/real/mandi/real2code_dataset_v0")
-    parser.add_argument("--output_dir", type=str, default="/store/real/mandi/real2code_eval_v0")
+    parser.add_argument("--data_dir", type=str, default="/mnt/data/zhangzhaodong/real2code/datasets/output")
+    parser.add_argument("--output_dir", type=str, default="/mnt/data/zhangzhaodong/real2code/outputs/sam_eval_results")
 
     parser.add_argument("--obj_type", type=str, default="*")
     parser.add_argument("--obj_folder", type=str, default="*")
     parser.add_argument("--loop_id", type=str, default="0")
-    parser.add_argument("--sam_run_name", type=str, default="scissors_eyeglasses_only_pointsTrue_lr0.001_bs24_ac24_11-30_00-23")
-    parser.add_argument("--sam_load_epoch", type=int, default=110) ## epoch takes precedence over steps
+    parser.add_argument("--sam_run_name", type=str, default="storageFurniture_only_pointsTrue_lr0.001_bs16_ac12_10-28_23-42")
+    parser.add_argument("--sam_load_epoch", type=int, default=48) ## epoch takes precedence over steps
     parser.add_argument("--sam_load_steps", type=int, default=-1)
     parser.add_argument("--sam_type", type=str, default="default")
-    parser.add_argument("--sam_model_dir", type=str, default="/store/real/mandi/sam_models") 
+    parser.add_argument("--sam_model_dir", type=str, default="/mnt/data/zhangzhaodong/real2code/outputs/sam_models") 
     parser.add_argument("--zero_shot_sam", action="store_true")
     parser.add_argument("--subsample_cameras", "-sub", type=int, default=1)
     parser.add_argument("--overwrite", '-o', action="store_true")

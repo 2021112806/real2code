@@ -2,8 +2,8 @@
 export CUDA_VISIBLE_DEVICES=0,1,2,3 # specify the GPU to use
 LOOPS=5
 FRAME=12
-OUT_DIR=/local/real/mandi/real2code_dataset_v0
-MOBILITY_DATA_DIR=/local/real/mandi/mobility_dataset_v2
+OUT_DIR=/mnt/data/zhangzhaodong/real2code/datasets/output
+MOBILITY_DATA_DIR=/mnt/data/zhangzhaodong/real2code/datasets/mobility_dataset_v2
 
 OBJ=Eyeglasses 
 
@@ -48,8 +48,8 @@ OBJ=Scissors
 OBJ=Scissors  
 LOOPS=5
 FRAME=12
-OUT_DIR=/local/real/mandi/real2code_dataset_v0
-MOBILITY_DATA_DIR=/local/real/mandi/mobility_dataset_v2
+OUT_DIR=/mnt/data/zhangzhaodong/real2code/datasets/output
+MOBILITY_DATA_DIR=/mnt/data/zhangzhaodong/real2code/datasets/mobility_dataset_v2
 
 SPLIT=test
 export MB_DATADIR=${MOBILITY_DATA_DIR}/${SPLIT}/${OBJ}

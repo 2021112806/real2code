@@ -1,4 +1,8 @@
 import os
+os.environ['PYTORCH_CUDA_ALLOC_CONF'] = 'max_split_size_mb:128'
+# 设置 wandb API key 环境变量，避免后续登录问题
+os.environ['WANDB_API_KEY'] = '5dc1a2e658c0c37de621f76763c96805cc8bc8d0'
+
 import torch
 import wandb 
 import json
@@ -7,8 +11,8 @@ import argparse
 import numpy as np
 from tqdm import tqdm
 from os.path import join
-from shape_complete.models import ShapeCompletionModel
-from shape_complete.dataset import ShapeCompletionDataset, ShapeCompletionEvalDataset
+from models import ShapeCompletionModel
+from dataset import ShapeCompletionDataset, ShapeCompletionEvalDataset
 from torch.nn import DataParallel
 from einops import rearrange
 from torch.utils.data import DataLoader
@@ -22,6 +26,80 @@ def get_loss(model, pred, target):
     if isinstance(model, DataParallel):
         model = model.module
     return model.compute_loss(pred, target)
+
+def collate_fn(batch):
+    """
+    自定义collate函数，处理不同大小的点云
+    对于input点云和query点云，如果大小不一致，进行padding或截断到批次中的最大大小
+    直接在GPU上处理数据
+    """
+    # 获取各个样本的大小和设备
+    input_sizes = [item['input'].shape[0] for item in batch]
+    query_sizes = [item['query'].shape[0] for item in batch]
+    
+    # 获取第一个样本的设备（假设所有样本在同一设备上）
+    device = batch[0]['input'].device
+    
+    # 计算批次中的最大大小
+    max_input_size = max(input_sizes)
+    max_query_size = max(query_sizes)
+    
+    collated_batch = {}
+    
+    # 处理input点云
+    inputs = []
+    for item in batch:
+        pcd = item['input']
+        
+        if pcd.shape[0] < max_input_size:
+            # Padding with zeros
+            pad_size = max_input_size - pcd.shape[0]
+            pad = torch.zeros(pad_size, pcd.shape[1], dtype=pcd.dtype, device=device)
+            pcd = torch.cat([pcd, pad], dim=0)
+        elif pcd.shape[0] > max_input_size:
+            # Truncate (理论上不应该发生，但为了安全起见)
+            pcd = pcd[:max_input_size]
+        inputs.append(pcd)
+    collated_batch['input'] = torch.stack(inputs, dim=0)
+    
+    # 处理query点云
+    queries = []
+    for item in batch:
+        query = item['query']
+        
+        if query.shape[0] < max_query_size:
+            # Padding with zeros
+            pad_size = max_query_size - query.shape[0]
+            pad = torch.zeros(pad_size, query.shape[1], dtype=query.dtype, device=device)
+            query = torch.cat([query, pad], dim=0)
+        elif query.shape[0] > max_query_size:
+            # Truncate
+            query = query[:max_query_size]
+        queries.append(query)
+    collated_batch['query'] = torch.stack(queries, dim=0)
+    
+    # 处理labels
+    labels = []
+    for item in batch:
+        label = item['label']
+        
+        if label.shape[0] < max_query_size:
+            # Padding with zeros (表示无效点)
+            pad_size = max_query_size - label.shape[0]
+            pad = torch.zeros(pad_size, dtype=label.dtype, device=device)
+            label = torch.cat([label, pad], dim=0)
+        elif label.shape[0] > max_query_size:
+            # Truncate
+            label = label[:max_query_size]
+        labels.append(label)
+    collated_batch['label'] = torch.stack(labels, dim=0)
+    
+    # 处理其他字段（如果存在）
+    if 'raw_pcd' in batch[0]:
+        # raw_pcd可能有不同大小，使用列表存储
+        collated_batch['raw_pcd'] = [item['raw_pcd'] for item in batch]
+    
+    return collated_batch
 
 def get_vis_table(model, loader, output_dir, num_vis_steps, skip_extents=True, use_max_extents=False, voxel_size=96):
     if isinstance(model, DataParallel):
@@ -113,7 +191,8 @@ def run(args):
         dataset, 
         batch_size=args.batch_size, 
         shuffle=True, 
-        num_workers=args.num_workers
+        num_workers=args.num_workers,
+        collate_fn=collate_fn
         )
     print(f"Loaded {len(dataset)} samples per epoch, {len(val_dataset)} samples for validation")
     val_dataloader = None 
@@ -122,7 +201,8 @@ def run(args):
             val_dataset, 
             batch_size=args.batch_size, 
             shuffle=True, 
-            num_workers=args.num_workers
+            num_workers=args.num_workers,
+            collate_fn=collate_fn
             ) 
     # setup model
     model = ShapeCompletionModel(
@@ -152,7 +232,7 @@ def run(args):
     run_name = f"{args.run_name}_query{args.num_query_points}_inp{args.num_input_points}_qr{args.query_surface_ratio}_bs{args.batch_size}_lr{args.learning_rate}"
 
     if args.wandb:
-        run = wandb.init(project="real2code", group="shape", name=run_name)
+        run = wandb.init(project="real2code", entity="1785115532-harbin-institute-of-technology", group="shape", name=run_name, reinit=False)
         wandb.config.update(args)
 
     output_dir = join(args.log_dir, run_name)
@@ -172,9 +252,7 @@ def run(args):
         for i, data in tqdm(enumerate(dataloader), total=len(dataloader), desc=f"Epoch {epoch}"
         ):
             input_points, query_points, labels = data["input"], data["query"], data["label"]
-            input_points = input_points.cuda()
-            query_points = query_points.cuda()
-            labels = labels.cuda()
+            # 数据已经在GPU上（由collate_fn处理），不需要再移到GPU
             optimizer.zero_grad() 
             pred = model(input_points, query_points) 
             loss = get_loss(model, pred, labels)
@@ -197,9 +275,7 @@ def run(args):
                     val_loss = 0
                     for j, val_data in enumerate(val_dataloader):
                         input_points, query_points, labels = val_data["input"], val_data["query"], val_data["label"]
-                        input_points = input_points.cuda()
-                        query_points = query_points.cuda() 
-                        labels = labels.cuda()
+                        # 数据已经在GPU上（由collate_fn处理），不需要再移到GPU
                         pred = model(input_points, query_points)
                         val_loss += get_loss(model, pred, labels).item()
                         if j > args.num_val_steps:
@@ -256,7 +332,7 @@ if __name__ == "__main__":
     parser.add_argument("--resume", "-r", type=str, default=None)
     parser.add_argument("--load_step", "-ls", type=int, default=None)
     # logging:
-    parser.add_argument("--log_dir", "-ld", type=str, default="/store/real/mandi/real2code_shape_models/")
+    parser.add_argument("--log_dir", "-ld", type=str, default="/mnt/data/zhangzhaodong/real2code/outputs/shape_models/")
     parser.add_argument("--log_interval", "-log", type=int, default=200)
     parser.add_argument("--save_interval", "-save", type=int, default=2000)
     parser.add_argument("--wandb", action="store_true")

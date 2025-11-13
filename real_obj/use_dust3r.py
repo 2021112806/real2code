@@ -14,8 +14,8 @@ from PIL import Image
 from natsort import natsorted
 from scipy.spatial import cKDTree as KDTree
 import open3d as o3d
-from image_seg import load_sam_model, get_image_transform, eval_model_on_points, get_background_mask
-from image_seg.test_sam import multimask_nms_filter, get_filled_img, compute_iou
+from part_segmentation.finetune_sam import get_image_transform
+from part_segmentation.test_sam_utils import multimask_nms_filter, get_filled_img, compute_iou, load_sam_model, eval_model_on_points, get_background_mask
 
 RGB_SIZE = (512, 512)
 
@@ -260,8 +260,9 @@ def main(args):
     
     print(f"Loading SAM model:")
     model, device, forward_fn, ckpt_name = load_sam_model(
-        run_name="v4_pointsTrue_lr0.0003_bs24_ac12_02-21_11-45",
-        load_epoch=11, skip_load=False
+        run_name="storageFurniture_only_pointsTrue_lr0.001_bs16_ac12_10-28_23-42",
+        model_dir="/mnt/data/zhangzhaodong/real2code/outputs/sam_models",
+        load_epoch=49, skip_load=False
     )
     init_values = prompt_sam(model, device, all_prompts, all_img_data, 128)
     save_path = join(objdir, "sam")
@@ -290,8 +291,8 @@ def main(args):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='use dust3r results to generate SAM prompt points')
-    parser.add_argument('--folder', '-f', type=str, default='1', help='Input folder')
-    parser.add_argument('--data_dir', default='/home/mandi/real_rgb/', type=str, help='Data directory')
+    parser.add_argument('--folder', '-f', type=str, default='17', help='Input folder')
+    parser.add_argument('--data_dir', default='/mnt/data/zhangzhaodong/real2code/datasets/real_world_data/', type=str, help='Data directory')
     parser.add_argument('--num_points', default=10, type=int, help='Number of points to generate')
     parser.add_argument('--num_rgbs', '-n', default=12, type=int, help='Number of RGB images to use')
     parser.add_argument('--min_valid', default=9, type=int, help='Minimum number of images a point should be valid in')

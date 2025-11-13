@@ -1,4 +1,10 @@
 import os
+os.environ["CUDA_VISIBLE_DEVICES"] = "0,1,2,3"
+os.environ['PYTORCH_CUDA_ALLOC_CONF'] = 'max_split_size_mb:128'
+# 设置 wandb API key 环境变量，避免后续登录问题
+os.environ['WANDB_API_KEY'] = '5dc1a2e658c0c37de621f76763c96805cc8bc8d0'
+os.environ['WANDB_MODE'] = 'online'  # 或 'disabled' 完全禁用
+
 from os.path import join
 from glob import glob
 from natsort import natsorted
@@ -27,7 +33,7 @@ from einops import rearrange, repeat
 from part_segmentation.sam_datasets import SamH5Dataset
 from torch.nn import DataParallel
 
-CKPT_PATH="/home/mandi/sam_vit_h_4b8939.pth"
+CKPT_PATH="/mnt/data/zhangzhaodong/real2code/models/sam/sam_vt_h.pth"
 
 def extend_instance(obj, mixin):
     """Apply mixins to a class instance after creation"""
@@ -38,15 +44,24 @@ def extend_instance(obj, mixin):
     ) 
 
 class PointsQueryMixin(nn.Module): 
-    def forward(self, batch, device, original_size=(480, 480)): 
-        rgb = batch["image"] 
+    def forward(self, image=None, masks=None, point_coords=None, point_labels=None, original_size=(480, 480), **kwargs): 
+        # DataParallel 会将 batch 字典展开为关键字参数
+        # 兼容两种调用方式：直接传batch字典 或 DataParallel展开的参数
+        if image is None and 'batch' in kwargs:
+            batch = kwargs['batch']
+            image = batch["image"]
+            point_coords = batch["point_coords"]
+            point_labels = batch["point_labels"]
+        
+        device = image.device
+        rgb = image
         rgb = self.preprocess(rgb)
         # breakpoint()
         image_embeddings = self.image_encoder(rgb)
         bs = rgb.shape[0]
         all_outputs = []
         for b in range(bs): 
-            points = (batch['point_coords'][b], batch['point_labels'][b]) # shape: (num_masks, num_points=1, 2), (num_masks, num_points=1)
+            points = (point_coords[b], point_labels[b]) # shape: (num_masks, num_points=1, 2), (num_masks, num_points=1)
             sparse_embeddings, dense_embeddings = self.prompt_encoder(points=points, boxes=None, masks=None)
             low_res_masks, iou_predictions = self.mask_decoder(
                 image_embeddings=image_embeddings[b:b+1], # shape 1,3,1024,1024
@@ -289,12 +304,14 @@ def eval_model(args, model, val_loader, loss_fn, device, forward_fn, epoch=0, or
     ):
         with torch.no_grad():
             if args.use_dp:
-                outputs = model(val_batch, device=device, original_size=original_size)
+                outputs = model(**val_batch, original_size=original_size)
             else:
                 outputs = forward_fn(
                     model, val_batch, device=device, original_size=original_size)
-            preds = outputs["pred"] 
-            labels = val_batch["masks"].to(device).detach() 
+            preds = outputs["pred"]
+            # DataParallel 返回结果已在正确设备上
+            pred_device = preds.device if args.use_dp else device
+            labels = val_batch["masks"].to(pred_device).detach() 
             total_loss, fc_loss, dc_loss, iou_loss = loss_fn(
                 preds, outputs["iou_predictions"], labels)
             val_total_loss += total_loss
@@ -341,6 +358,7 @@ def main(args):
     dataset_kwargs['grid_size'] = args.grid_size
     dataset_kwargs['max_background_masks'] = args.max_bg
     dataset_kwargs['use_cache'] = args.cache
+    # dataset_kwargs['loop_id'] = 0  # 添加这行
     # if args.cache:
     #     assert args.num_data_workers == 0, "num_data_workers must be 0 when using cache"
     #     print('Using cache and repeated rgb for training dataset only')
@@ -421,7 +439,7 @@ def main(args):
     
 
     if args.wandb:
-        run = wandb.init(project="real2code", entity="mandi", group="sam", job_type="train")
+        run = wandb.init(project="real2code", entity="1785115532-harbin-institute-of-technology", group="sam", job_type="train", reinit=False)
         run.name = run_name
         wandb.config.update(vars(args))
     total_step = 0 
@@ -434,41 +452,58 @@ def main(args):
             enumerate(loader), total=len(loader), desc=f"Epoch {epoch}"
         ):
             if args.use_dp:
-                outputs = model(batch, device=device, original_size=original_size)
+                outputs = model(**batch, original_size=original_size)
             else:
                 outputs = forward_fn(model, batch, device=device, original_size=original_size)
             preds = outputs["pred"]
             # preds = torch.as_tensor(preds, dtype=torch.float32, requires_grad=True)
-            labels = batch["masks"].to(device) #.detach()
+            # DataParallel 返回结果已在正确设备上
+            pred_device = preds.device if args.use_dp else device
+            labels = batch["masks"].to(pred_device, non_blocking=True) #.detach()
             iou_preds = outputs["iou_predictions"]
+            
+            # 只在需要可视化时保留preds副本
+            need_vis = (args.wandb and total_step % args.vis_freq == 0)
+            vis_preds = preds.detach().clone() if need_vis else None
+            
             total_loss, fc_loss, dc_loss, iou_loss = loss_fn(preds, iou_preds, labels)
+            
+            # 记录损失值
+            loss_dict = {"fc": fc_loss.item(), "dc": dc_loss.item(), "iou": iou_loss.item()}
+            
             total_loss /= args.grad_accum_steps
             total_loss.backward()
+            
+            # 释放中间变量
+            del outputs, preds, labels, iou_preds
+            
             if (step+1) % args.grad_accum_steps == 0: 
                 optimizer.step()
                 optimizer.zero_grad(set_to_none=True)
+                torch.cuda.empty_cache()
                  
             total_step += 1
             if total_step % args.log_freq == 0:
-                print(f"epoch: {epoch} | step: {step} focal: {fc_loss} | dice: {dc_loss} | iou: {iou_loss} | total: {total_loss}")
+                print(f"epoch: {epoch} | step: {step} focal: {loss_dict['fc']} | dice: {loss_dict['dc']} | iou: {loss_dict['iou']} | total: {total_loss.item()}")
                 if args.wandb:
                     wandb.log(
                         {
-                            "focal_loss": fc_loss,
-                            "dice_loss": dc_loss,
-                            "iou_loss": iou_loss,
-                            "total_loss": total_loss,
+                            "focal_loss": loss_dict['fc'],
+                            "dice_loss": loss_dict['dc'],
+                            "iou_loss": loss_dict['iou'],
+                            "total_loss": total_loss.item(),
                             "total_step": total_step, 
                         }
                     )
-            if args.wandb and total_step % args.vis_freq == 0:
+            if args.wandb and total_step % args.vis_freq == 0 and vis_preds is not None:
                 # visualize predictions
                 mask_threshold = model.module.mask_threshold if isinstance(model, DataParallel) else model.mask_threshold
-                table = get_wandb_table(batch, preds, mask_threshold)
+                table = get_wandb_table(batch, vis_preds, mask_threshold)
                 wandb.log({
                     f"Pred_Train/step_{total_step}": table,
                     "vis_step": total_step,
                     })
+                del vis_preds  # 可视化完成后删除
             if total_step % args.save_freq == 0:
                 save_fname = f"ckpt_step_{total_step}.pth"
                 # save only the decoders
@@ -487,7 +522,7 @@ def main(args):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--data_dir", type=str, default="/local/real/mandi/real2code_dataset_v0")
-    parser.add_argument("--output_dir", type=str, default="/store/real/mandi/sam_models")    
+    parser.add_argument("--output_dir", type=str, default="./outputs/sam_models")    
     parser.add_argument("--load_run", type=str, default="")
     parser.add_argument("--load_epoch", type=int, default=-1)
     parser.add_argument("--sam_type", default="default", type=str)
@@ -503,7 +538,7 @@ if __name__ == "__main__":
     parser.add_argument("--save_freq", default=500, type=int)
     parser.add_argument("--fc_weight", default=1, type=int) 
     parser.add_argument("--prompts_per_mask", type=int, default=16)
-    parser.add_argument("--num_data_workers", type=int, default=0)
+    parser.add_argument("--num_data_workers", type=int, default=16)
     parser.add_argument("--blender", default=True, action="store_true")
     parser.add_argument("--min_loss", action="store_true")
     parser.add_argument("--grid_size", type=int, default=1)

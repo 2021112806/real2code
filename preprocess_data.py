@@ -162,8 +162,8 @@ def run(args):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--data_dir", type=str, default="/local/real/mandi/real2code_dataset_v0/")
-    parser.add_argument("--shard_output_dir", type=str, default="/local/real/mandi/real2code_shards_v0")
+    parser.add_argument("--data_dir", type=str, default="/mnt/data/zhangzhaodong/real2code/datasets/output/")
+    parser.add_argument("--shard_output_dir", type=str, default="/mnt/data/zhangzhaodong/real2code/datasets/shard_output")
     parser.add_argument("--split", type=str, default="train")
     parser.add_argument("--obj_type", type=str, default="*")
     parser.add_argument("--loop_id", type=str, default="*")

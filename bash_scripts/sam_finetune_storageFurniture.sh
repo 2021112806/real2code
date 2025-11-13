@@ -1,0 +1,2 @@
+python part_segmentation/finetune_sam.py --blender --run_name storageFurniture_only \
+ --use_dp -dp 4 --batch_size 16 --epochs 50 --data_dir /mnt/data/zhangzhaodong/real2code/datasets/output --rebuttal_objects

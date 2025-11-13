@@ -89,7 +89,7 @@ def clean_up_urdf(fname, np_random, open_drawer=True, margin=0.8):
             _upper = np_random.uniform(float(_upper) * margin, float(_upper))
             # _upper = float(_upper)# NOTE: open the drawer fully!
             _axis = joint.find('axis').attrib['xyz']
-            _axis = np.array(_axis.split(' ')).astype(np.float)
+            _axis = np.array(_axis.split(' ')).astype(float)
             _offset = _axis * _upper
             child = joint.find('child')
             # print(_offset)
@@ -107,7 +107,7 @@ def clean_up_urdf(fname, np_random, open_drawer=True, margin=0.8):
                         ori = visual.find('origin') 
                         if ori is not None:
                             xyz = ori.attrib['xyz'].split(' ')
-                            xyz = np.array(xyz).astype(np.float) + _offset
+                            xyz = np.array(xyz).astype(float) + _offset
                             ori.attrib['xyz'] = ' '.join([str(x) for x in xyz])
                     
     tmp_fname = fname.replace('.urdf', '_tmp.urdf')
@@ -581,8 +581,8 @@ def process_folder(args, folder):
 
 if __name__ == "__main__": 
     parser = argparse.ArgumentParser()
-    parser.add_argument("--data_dir", default="/store/real/mandi/mobility_dataset_v2")
-    parser.add_argument('--out_dir', type=str, default="/local/real/mandi/blender_dataset_v5")
+    parser.add_argument("--data_dir", default="/mnt/data/zhangzhaodong/real2code/datasets/mobility_dataset_v2")
+    parser.add_argument('--out_dir', type=str, default="/mnt/data/zhangzhaodong/real2code/datasets/output")
     parser.add_argument('--split', type=str, default="test") 
     parser.add_argument('--folder', type=str, default="46172") 
     parser.add_argument('--overwrite', "-o", action="store_true")
@@ -594,7 +594,7 @@ if __name__ == "__main__":
     parser.add_argument('--input_urdf', type=str, default="mobility.urdf") 
     parser.add_argument('--num_frames', type=int, default=2)
     parser.add_argument('--full_circle', action="store_true")
-    parser.add_argument('--haven_path', nargs='?', default="/local/real/mandi/", help="The folder where the `hdri` folder can be found, to load an world environment")
+    parser.add_argument('--haven_path', nargs='?', default="/mnt/data/zhangzhaodong/real2code/", help="The folder where the `hdri` folder can be found, to load an world environment")
     parser.add_argument('--render_bg', action="store_true")
     args = parser.parse_args()
     bproc.init()

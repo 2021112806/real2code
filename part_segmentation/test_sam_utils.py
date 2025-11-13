@@ -39,7 +39,7 @@ from part_segmentation.sam_to_pcd import load_blender_data
 from part_segmentation.finetune_sam import SamH5Dataset, get_image_transform, forward_sam, forward_sam_points, get_wandb_table
 import seaborn as sns
 import open3d as o3d
-CKPT_PATH="/home/mandi/sam_vit_h_4b8939.pth"
+CKPT_PATH="/mnt/data/zhangzhaodong/real2code/models/sam/sam_vt_h.pth"
 """
 RUN=cached_bg4_uniform_16prompt_pointsTrue_lr0.0003_bs8_ac32_10-20_17-42; STEP=58000
 python test_sam.py --points --blender --run_name $RUN --load_step ${STEP} --num_grid_points 32 --data_dir /local/real/mandi/blender_dataset_v1/

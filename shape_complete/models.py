@@ -1,10 +1,10 @@
 import torch
 from torch import nn
 import torch.nn.functional as F
-from shape_complete.modules.pointnet import PointNetSetAbstraction, PointNetSetAbstractionMsg, PointNetFeaturePropagation
-from shape_complete.modules.unet3d import UNet3D, Abstract3DUNet, DoubleConv
-from shape_complete.modules.mlp import MLP
-from shape_complete.modules.gridding import VirtualGrid
+from modules.pointnet import PointNetSetAbstraction, PointNetSetAbstractionMsg, PointNetFeaturePropagation
+from modules.unet3d import UNet3D, Abstract3DUNet, DoubleConv
+from modules.mlp import MLP
+from modules.gridding import VirtualGrid
 import torch_scatter 
 from einops import rearrange
 import math

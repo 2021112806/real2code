@@ -1,5 +1,15 @@
-wandb/
+/wandb/
 *.pyc
 */*/*.pyc
 */__pycache__
 .ipynb_checkpoints/
+/datasets/
+/models/
+/real2code_finetune/code-llama-shape-ft/
+/outputs/
+nohup.out
+/hdris/
+/textures/
+
+#other repositories
+/ManifoldPlus/

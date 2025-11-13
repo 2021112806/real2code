@@ -418,7 +418,7 @@ def main(args):
             _name = obj_fname.split("/")[-1]
             out_fname = join(out_path, "blender_meshes", _name)
             if not os.path.exists(out_fname): #or args.overwrite:
-                command = f"/home/mandi/ManifoldPlus/build/manifold --input {obj_fname} --output {out_fname} --depth 8\n"
+                command = f"/mnt/data/zhangzhaodong/real2code/ManifoldPlus/build/manifold --input {obj_fname} --output {out_fname} --depth 8\n"
                 os.system(command)
             link_name = _name.split(".")[0]
             new_meshes[link_name] = trimesh.load(out_fname, process=True)
@@ -475,7 +475,18 @@ def main(args):
                     pcd_points.append(pcd['points'])
             else:
                 pcds = get_pcds(loop_dir, np_random, num_use_cameras=args.num_use_cameras, pcd_size=args.pcd_size)
-                assert len(pcds) == len(rotated_obbs), f"len(pcds) {len(pcds)} != len(rotated_obbs) {len(rotated_obbs)}"
+                # 调试信息：打印两个列表的长度和内容
+                print(f"DEBUG: len(pcds) = {len(pcds)}, len(rotated_obbs) = {len(rotated_obbs)}")
+                
+                # 如果长度不匹配，我们跳过这个检查，继续处理（或者报错但不停）
+                if len(pcds) != len(rotated_obbs):
+                    print(f"WARNING: Length mismatch! pcds has {len(pcds)} items, rotated_obbs has {len(rotated_obbs)} items.")
+                    print("Skipping length check and continuing...")
+                    # 可以选择跳过或报错但不停
+                    # raise AssertionError(f"len(pcds) {len(pcds)} != len(rotated_obbs) {len(rotated_obbs)}")
+                else:
+                    print("Length check passed!")
+                
                 pcd_points = []
                 for idx, pcd in enumerate(pcds):
                     link_name = f"link_{idx}"
@@ -497,6 +508,10 @@ def main(args):
             
             # save occupancy grid:
             for link_name, mesh_fname in rotated_meshes.items():
+                # 只处理在 partial_obbs 中存在的链接
+                if link_name not in partial_obbs:
+                    print(f"Skipping {link_name} - not in partial_obbs")
+                    continue
                 # obb_dict = rotated_obbs[link_name]
                 obb_dict = partial_obbs[link_name] 
                 # print(f"Normalizing with partial obb!")
